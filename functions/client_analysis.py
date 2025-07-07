@@ -12,11 +12,20 @@ def products_bought_by_client(df: pd.DataFrame, client: str, n: int = 10) -> pd.
 
 def client_share_of_sales(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Devuelve el peso (porcentaje) de cada cliente sobre el total de unidades vendidas, excluyendo devoluciones.
+    Devuelve el peso (porcentaje) de cada cliente sobre el total neto de unidades vendidas.
+    Incluye el nombre del cliente si está disponible.
     """
-    df = df.loc[df['cantidad_vendida'] > 0]
-    total_unidades = df['cantidad_vendida'].sum()
-    resumen = df.groupby('cliente')['cantidad_vendida'].sum().reset_index()
+    total_unidades = df['cantidad_vendida'].sum()  # Total neto (incluye devoluciones como valores negativos)
+    
+    # Agrupar por cliente y obtener el primer nombre_cliente para cada código
+    if 'nombre_cliente' in df.columns:
+        resumen = df.groupby('cliente').agg({
+            'cantidad_vendida': 'sum',
+            'nombre_cliente': 'first'  # Tomar el primer nombre para cada cliente
+        }).reset_index()
+    else:
+        resumen = df.groupby('cliente')['cantidad_vendida'].sum().reset_index()
+    
     resumen['porcentaje'] = 100 * resumen['cantidad_vendida'] / total_unidades
     return resumen.sort_values('porcentaje', ascending=False)
 

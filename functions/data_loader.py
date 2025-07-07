@@ -15,11 +15,14 @@ def load_and_clean_data(file: BinaryIO) -> pd.DataFrame:
         df = pd.read_excel(file, engine='xlrd')
     else:
         df = pd.read_excel(file, engine='openpyxl')
+    
     # Limpieza básica: eliminar filas vacías y columnas irrelevantes
     df = df.dropna(how='all')
     df = df.loc[:, ~df.columns.str.contains('^Unnamed')]  # Quitar columnas sin nombre
+    
     # Normalizar nombres de columnas
     df.columns = df.columns.str.strip().str.lower().str.replace(' ', '_')
+    
     # Renombrar columnas a estándar
     rename_dict = {
         'cliente': 'cliente',
@@ -32,4 +35,13 @@ def load_and_clean_data(file: BinaryIO) -> pd.DataFrame:
         'total': 'total'
     }
     df = df.rename(columns=rename_dict)
+    
+    # Convertir tipos de datos para evitar errores de Arrow
+    if 'codigo_del_articulo' in df.columns:
+        df['codigo_del_articulo'] = df['codigo_del_articulo'].astype(str)
+    if 'cantidad_vendida' in df.columns:
+        df['cantidad_vendida'] = pd.to_numeric(df['cantidad_vendida'], errors='coerce')
+    if 'cliente' in df.columns:
+        df['cliente'] = df['cliente'].astype(str)
+    
     return df 
