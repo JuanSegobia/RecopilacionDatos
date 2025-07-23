@@ -37,22 +37,64 @@ if uploaded_file:
         key="analysis_type" 
     )
     if analysis_type != "Selecciona una opción":
-        # Paso 3: Filtros (solo se muestran después de seleccionar el análisis)
-        st.header("3. Filtros")
+        # Paso 3: Filtros (solo se muestran según el tipo de análisis)
+        # Determinar qué filtros mostrar según el análisis seleccionado
+        show_cliente_filter = analysis_type in ["Productos más comprados por cliente", "Peso de cada cliente sobre el total de unidades"]
+        show_producto_filter = analysis_type in ["Productos más comprados por cliente", "Peso de cada cliente sobre el total de unidades"]
+        show_tipologia_filter = analysis_type in ["Productos más comprados por cliente", "Peso de cada cliente sobre el total de unidades", "Cantidad de devoluciones por cliente", "Análisis por género"]
         
-        # Filtros dinámicos
-        clientes = df['cliente'].dropna().unique().tolist()
-        productos = df['descripcion_del_producto'].dropna().unique().tolist()
-        tipologias = df['tipologia'].dropna().unique().tolist()
+        # Solo mostrar el header de filtros si hay al menos un filtro que mostrar
+        if show_cliente_filter or show_producto_filter or show_tipologia_filter:
+            st.header("3. Filtros")
+            
+            # Filtros dinámicos
+            clientes = df['cliente'].dropna().unique().tolist()
+            productos = df['descripcion_del_producto'].dropna().unique().tolist()
+            tipologias = df['tipologia'].dropna().unique().tolist()
 
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            cliente_input = st.text_input("Filtrar por cliente (código o nombre)", placeholder="Ej: 12345 o Juan Pérez")
-        with col2:
-            producto_input = st.text_input("Filtrar por producto (código o nombre)", placeholder="Ej: ABC123 o Remera")
-        with col3:
-            tipologia_sel = st.selectbox("Filtrar por tipología", ["Todas"] + tipologias)
+            # Crear columnas dinámicamente según los filtros que se muestren
+            filters_to_show = []
+            if show_cliente_filter:
+                filters_to_show.append("cliente")
+            if show_producto_filter:
+                filters_to_show.append("producto")
+            if show_tipologia_filter:
+                filters_to_show.append("tipologia")
+            
+            if len(filters_to_show) == 1:
+                col1 = st.columns(1)[0]
+                cols = [col1]
+            elif len(filters_to_show) == 2:
+                col1, col2 = st.columns(2)
+                cols = [col1, col2]
+            else:
+                col1, col2, col3 = st.columns(3)
+                cols = [col1, col2, col3]
+            
+            # Asignar filtros a columnas
+            filter_idx = 0
+            cliente_input = ""
+            producto_input = ""
+            tipologia_sel = "Todas"
+            
+            if show_cliente_filter:
+                with cols[filter_idx]:
+                    cliente_input = st.text_input("Filtrar por cliente (código o nombre)", placeholder="Ej: 12345 o Juan Pérez")
+                filter_idx += 1
+            
+            if show_producto_filter:
+                with cols[filter_idx]:
+                    producto_input = st.text_input("Filtrar por producto (código o nombre)", placeholder="Ej: ABC123 o Remera")
+                filter_idx += 1
+            
+            if show_tipologia_filter:
+                with cols[filter_idx]:
+                    tipologia_sel = st.selectbox("Filtrar por tipología", ["Todas"] + tipologias)
+        else:
+            # Si no se muestran filtros, inicializar variables vacías
+            cliente_input = ""
+            producto_input = ""
+            tipologia_sel = "Todas"
 
         # Aplicar filtros
         df_filt = df.copy()
@@ -109,18 +151,52 @@ if uploaded_file:
                 st.info("👆 Ingresa un cliente para ver sus productos más comprados.")
         
         elif analysis_type == "Tipologías más vendidas":
-            result = top_selling_typologies(df_filt)
-            st.dataframe(result)
-            if not result.empty:
-                fig = px.pie(result, names='tipologia', values='cantidad_vendida', title='Tipologías más vendidas')
-                st.plotly_chart(fig, use_container_width=True)
+            # No se muestran filtros para este análisis
+            
+            # Tabla 1: Todos los artículos
+            st.subheader("📊 Todos los artículos")
+            result_todos = top_selling_typologies(df[df['cuenta_ventas'] == True])
+            st.dataframe(result_todos)
+            if not result_todos.empty:
+                fig1 = px.pie(result_todos, names='tipologia', values='cantidad_vendida', 
+                             title='Tipologías más vendidas - Todos los artículos')
+                st.plotly_chart(fig1, use_container_width=True)
+            
+            st.divider()
+            
+            # Tabla 2: Solo básicos
+            st.subheader("🔹 Solo básicos")
+            df_basicos = df[(df['cuenta_ventas'] == True) & (df['tipologia'] == 'basicos')]
+            if not df_basicos.empty:
+                # Para básicos, necesitamos una lógica diferente ya que todos tienen la misma tipología
+                # Vamos a agrupar por código de artículo y descripción
+                result_basicos = df_basicos.groupby(['codigo_del_articulo', 'descripcion_del_producto'])['cantidad_vendida'].sum().reset_index()
+                result_basicos = result_basicos.sort_values('cantidad_vendida', ascending=False).head(10)
+                result_basicos = result_basicos.rename(columns={'codigo_del_articulo': 'Código', 'descripcion_del_producto': 'Descripción', 'cantidad_vendida': 'Cantidad vendida'})
+                st.dataframe(result_basicos)
+                if not result_basicos.empty:
+                    fig2 = px.bar(result_basicos, x='Descripción', y='Cantidad vendida', 
+                                 title='Top 10 productos básicos más vendidos')
+                    fig2.update_xaxes(tickangle=45)
+                    st.plotly_chart(fig2, use_container_width=True)
+            else:
+                st.info("No se encontraron productos básicos en los datos.")
         
         elif analysis_type == "Top productos más vendidos":
+            # No se muestran filtros para este análisis
             n = st.slider("¿Cuántos productos mostrar?", 5, 20, 10)
-            result = top_selling_products(df_filt, n)
+            result = top_selling_products(df[df['cuenta_ventas'] == True], n)
+            
+            # Agregar ranking
+            if not result.empty:
+                result = result.reset_index(drop=True)
+                result.insert(0, 'Ranking', range(1, len(result) + 1))
+            
             st.dataframe(result)
             if not result.empty:
-                fig = px.bar(result, x='descripcion_del_producto', y='cantidad_vendida', title='Top productos más vendidos')
+                fig = px.bar(result, x='descripcion_del_producto', y='cantidad_vendida', 
+                           title='Top productos más vendidos')
+                fig.update_xaxes(tickangle=45)
                 st.plotly_chart(fig, use_container_width=True)
         
         elif analysis_type == "Peso de cada cliente sobre el total de unidades":
@@ -141,7 +217,7 @@ if uploaded_file:
                         porcentaje_cliente = (cliente_unidades / total_general) * 100 if total_general > 0 else 0
                         
                         st.metric("Unidades del cliente (ventas normales)", int(cliente_unidades))
-                        st.metric("% del total general", f"{porcentaje_cliente:.2f}%")
+                        st.metric("% del total general", f"{porcentaje_cliente:.1f}%")
                         
                         # Mostrar breakdown por cliente específico
                         st.dataframe(result)
@@ -161,7 +237,7 @@ if uploaded_file:
                         porcentaje_producto = (producto_unidades / total_producto_especifico) * 100 if total_producto_especifico > 0 else 0
                         
                         st.metric("Unidades del cliente para este producto", int(producto_unidades))
-                        st.metric("% del total de este producto", f"{porcentaje_producto:.2f}%")
+                        st.metric("% del total de este producto", f"{porcentaje_producto:.1f}%")
                         st.metric("Total vendido de este producto (ventas normales)", int(total_producto_especifico))
                         
                         # Mostrar quién compra más este producto
@@ -214,20 +290,22 @@ if uploaded_file:
                     st.metric("Total neto de unidades", int(total_unidades))
                 
                 if not result.empty:
-                    fig = px.pie(result, names='cliente', values='porcentaje', 
+                    fig = px.pie(result, names='cliente', values='cantidad_vendida', 
                             title='Peso de cada cliente sobre el total de unidades')
                     st.plotly_chart(fig, use_container_width=True)
 
         elif analysis_type == "Cantidad de devoluciones por cliente":
             result = client_returns_count(df_filt)
-            total_devoluciones = df_filt.loc[df_filt['cantidad_vendida'] < 0].shape[0]
+            total_devoluciones = df_filt.loc[df_filt['cantidad_vendida'] < 0, 'cantidad_vendida'].abs().sum()
             col1, col2 = st.columns([2,1])
             with col1:
                 st.dataframe(result)
             with col2:
-                st.metric("Total de devoluciones", int(total_devoluciones))
+                st.metric("Total de devoluciones (unidades)", int(total_devoluciones))
             if not result.empty:
-                fig = px.bar(result, x='cliente', y='cantidad_devoluciones', title='Cantidad de devoluciones por cliente')
+                fig = px.bar(result, x='cliente', y='cantidad_devoluciones', 
+                           title='Cantidad de devoluciones por cliente')
+                fig.update_xaxes(tickangle=45)
                 st.plotly_chart(fig, use_container_width=True)
         
         elif analysis_type == "Análisis por género":
@@ -242,7 +320,7 @@ if uploaded_file:
             st.metric("Total unidades vendidas (excluye categorías especiales)", int(ventas_normales))
         
         elif analysis_type == "Categorías especiales (Cierres, CH, Sorteos, etc.)":
-            summary = get_special_categories_summary(df_filt)
+            summary = get_special_categories_summary(df)  # Usar df original, no filtrado
             
             # Crear tabs para cada categoría
             tab1, tab2, tab3, tab4, tab5 = st.tabs(["Cierres", "Cheques", "Sorteos", "Perfuminas", "Otros Códigos"])
@@ -257,6 +335,8 @@ if uploaded_file:
                 
                 if not summary['cierres']['detalle'].empty:
                     st.dataframe(summary['cierres']['detalle'])
+                else:
+                    st.info("No se encontraron registros de cierres en los datos.")
             
             with tab2:
                 st.subheader("🏷️ Cheques")
@@ -268,6 +348,8 @@ if uploaded_file:
                 
                 if not summary['ch']['detalle'].empty:
                     st.dataframe(summary['ch']['detalle'])
+                else:
+                    st.info("No se encontraron registros de cheques en los datos.")
             
             with tab3:
                 st.subheader("🎲 Sorteos")
@@ -279,6 +361,8 @@ if uploaded_file:
                 
                 if not summary['sorteos']['detalle'].empty:
                     st.dataframe(summary['sorteos']['detalle'])
+                else:
+                    st.info("No se encontraron registros de sorteos en los datos.")
             
             with tab4:
                 st.subheader("🌸 Perfuminas")
@@ -290,6 +374,8 @@ if uploaded_file:
                 
                 if not summary['perfuminas']['detalle'].empty:
                     st.dataframe(summary['perfuminas']['detalle'])
+                else:
+                    st.info("No se encontraron registros de perfuminas en los datos.")
             
             with tab5:
                 st.subheader("❓ Otros Códigos")
@@ -301,6 +387,8 @@ if uploaded_file:
                 
                 if not summary['otros_codigos']['detalle'].empty:
                     st.dataframe(summary['otros_codigos']['detalle'])
+                else:
+                    st.info("No se encontraron otros códigos especiales en los datos.")
                     
             # Resumen general
             # st.subheader("📊 Resumen general")
