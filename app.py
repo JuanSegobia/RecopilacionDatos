@@ -245,7 +245,7 @@ if uploaded_file:
             summary = get_special_categories_summary(df_filt)
             
             # Crear tabs para cada categoría
-            tab1, tab2, tab3, tab4, tab5 = st.tabs(["Cierres", "CH", "Sorteos", "Perfuminas", "Otros Códigos"])
+            tab1, tab2, tab3, tab4, tab5 = st.tabs(["Cierres", "Cheques", "Sorteos", "Perfuminas", "Otros Códigos"])
             
             with tab1:
                 st.subheader("🔒 Cierres")
@@ -259,7 +259,7 @@ if uploaded_file:
                     st.dataframe(summary['cierres']['detalle'])
             
             with tab2:
-                st.subheader("🏷️ Códigos CH")
+                st.subheader("🏷️ Cheques")
                 col1, col2 = st.columns(2)
                 with col1:
                     st.metric("Cantidad de registros", summary['ch']['cantidad'])
