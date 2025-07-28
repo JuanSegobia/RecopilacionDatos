@@ -166,19 +166,22 @@ if uploaded_file:
             
             # Tabla 2: Solo básicos
             st.subheader("🔹 Solo básicos")
-            df_basicos = df[(df['cuenta_ventas'] == True) & (df['tipologia'] == 'basicos')]
+            df_basicos = df[(df['cuenta_ventas'] == True) & (df['codigo_del_articulo'].str.startswith("B"))]
+
             if not df_basicos.empty:
-                # Para básicos, necesitamos una lógica diferente ya que todos tienen la misma tipología
-                # Vamos a agrupar por código de artículo y descripción
                 result_basicos = df_basicos.groupby(['codigo_del_articulo', 'descripcion_del_producto'])['cantidad_vendida'].sum().reset_index()
                 result_basicos = result_basicos.sort_values('cantidad_vendida', ascending=False).head(10)
-                result_basicos = result_basicos.rename(columns={'codigo_del_articulo': 'Código', 'descripcion_del_producto': 'Descripción', 'cantidad_vendida': 'Cantidad vendida'})
+                result_basicos = result_basicos.rename(columns={
+                    'codigo_del_articulo': 'Código', 
+                    'descripcion_del_producto': 'Descripción', 
+                    'cantidad_vendida': 'Cantidad vendida'
+                })
                 st.dataframe(result_basicos)
-                if not result_basicos.empty:
-                    fig2 = px.bar(result_basicos, x='Descripción', y='Cantidad vendida', 
-                                 title='Top 10 productos básicos más vendidos')
-                    fig2.update_xaxes(tickangle=45)
-                    st.plotly_chart(fig2, use_container_width=True)
+                
+                fig2 = px.bar(result_basicos, x='Descripción', y='Cantidad vendida', 
+                            title='Top 10 productos básicos más vendidos')
+                fig2.update_xaxes(tickangle=45)
+                st.plotly_chart(fig2, use_container_width=True)
             else:
                 st.info("No se encontraron productos básicos en los datos.")
         
