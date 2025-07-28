@@ -122,6 +122,17 @@ def get_special_categories_summary(df: pd.DataFrame) -> dict:
     """
     Devuelve un resumen de todas las categorías especiales.
     """
+    if df.empty:
+        # Crear estructura vacía si no hay datos
+        empty_summary = {
+            'cierres': {'cantidad': 0, 'unidades': 0, 'detalle': pd.DataFrame()},
+            'ch': {'cantidad': 0, 'unidades': 0, 'detalle': pd.DataFrame()},
+            'sorteos': {'cantidad': 0, 'unidades': 0, 'detalle': pd.DataFrame()},
+            'perfuminas': {'cantidad': 0, 'unidades': 0, 'detalle': pd.DataFrame()},
+            'otros_codigos': {'cantidad': 0, 'unidades': 0, 'detalle': pd.DataFrame()}
+        }
+        return empty_summary
+    
     if 'categoria_especial' not in df.columns:
         df = add_typology_column(df)
     
@@ -129,42 +140,67 @@ def get_special_categories_summary(df: pd.DataFrame) -> dict:
     
     # Cierres
     cierres = df[df['categoria_especial'] == 'cierre']
+    if not cierres.empty:
+        detalle_cierres = cierres.groupby('codigo_del_articulo')['cantidad_vendida'].sum().reset_index()
+    else:
+        detalle_cierres = pd.DataFrame(columns=['codigo_del_articulo', 'cantidad_vendida'])
+    
     summary['cierres'] = {
         'cantidad': len(cierres),
-        'unidades': cierres['cantidad_vendida'].sum(),
-        'detalle': cierres.groupby('codigo_del_articulo')['cantidad_vendida'].sum().reset_index()
+        'unidades': cierres['cantidad_vendida'].sum() if not cierres.empty else 0,
+        'detalle': detalle_cierres
     }
     
     # CH
     ch_items = df[df['categoria_especial'] == 'ch']
+    if not ch_items.empty:
+        detalle_ch = ch_items.groupby(['codigo_del_articulo', 'descripcion_del_producto'])['cantidad_vendida'].sum().reset_index()
+    else:
+        detalle_ch = pd.DataFrame(columns=['codigo_del_articulo', 'descripcion_del_producto', 'cantidad_vendida'])
+    
     summary['ch'] = {
         'cantidad': len(ch_items),
-        'unidades': ch_items['cantidad_vendida'].sum(),
-        'detalle': ch_items.groupby(['codigo_del_articulo', 'descripcion_del_producto'])['cantidad_vendida'].sum().reset_index()
+        'unidades': ch_items['cantidad_vendida'].sum() if not ch_items.empty else 0,
+        'detalle': detalle_ch
     }
     
     # Sorteos
     sorteos = df[df['categoria_especial'] == 'sorteo']
+    if not sorteos.empty:
+        detalle_sorteos = sorteos.groupby('codigo_del_articulo')['cantidad_vendida'].sum().reset_index()
+    else:
+        detalle_sorteos = pd.DataFrame(columns=['codigo_del_articulo', 'cantidad_vendida'])
+    
     summary['sorteos'] = {
         'cantidad': len(sorteos),
-        'unidades': sorteos['cantidad_vendida'].sum(),
-        'detalle': sorteos.groupby('codigo_del_articulo')['cantidad_vendida'].sum().reset_index()
+        'unidades': sorteos['cantidad_vendida'].sum() if not sorteos.empty else 0,
+        'detalle': detalle_sorteos
     }
     
     # Perfuminas
     perfuminas = df[df['categoria_especial'] == 'perfuminas']
+    if not perfuminas.empty:
+        detalle_perfuminas = perfuminas.groupby('codigo_del_articulo')['cantidad_vendida'].sum().reset_index()
+    else:
+        detalle_perfuminas = pd.DataFrame(columns=['codigo_del_articulo', 'cantidad_vendida'])
+    
     summary['perfuminas'] = {
         'cantidad': len(perfuminas),
-        'unidades': perfuminas['cantidad_vendida'].sum(),
-        'detalle': perfuminas.groupby('codigo_del_articulo')['cantidad_vendida'].sum().reset_index()
+        'unidades': perfuminas['cantidad_vendida'].sum() if not perfuminas.empty else 0,
+        'detalle': detalle_perfuminas
     }
     
     # Otros códigos
     otros = df[df['categoria_especial'] == 'otros_codigos']
+    if not otros.empty:
+        detalle_otros = otros.groupby(['codigo_del_articulo', 'descripcion_del_producto'])['cantidad_vendida'].sum().reset_index()
+    else:
+        detalle_otros = pd.DataFrame(columns=['codigo_del_articulo', 'descripcion_del_producto', 'cantidad_vendida'])
+    
     summary['otros_codigos'] = {
         'cantidad': len(otros),
-        'unidades': otros['cantidad_vendida'].sum(),
-        'detalle': otros.groupby(['codigo_del_articulo', 'descripcion_del_producto'])['cantidad_vendida'].sum().reset_index()
+        'unidades': otros['cantidad_vendida'].sum() if not otros.empty else 0,
+        'detalle': detalle_otros
     }
     
     return summary
