@@ -244,15 +244,18 @@ if uploaded_file:
                         st.metric("Total vendido de este producto (ventas normales)", int(total_producto_especifico))
                         
                         # Mostrar quién compra más este producto
+                        agg_dict = {'cantidad_vendida': 'sum'}
                         if 'nombre_cliente' in df_filt.columns:
-                            cliente_producto = df_filt.groupby('cliente').agg({
-                                'cantidad_vendida': 'sum',
-                                'nombre_cliente': 'first'
-                            }).reset_index()
-                        else:
-                            cliente_producto = df_filt.groupby('cliente')['cantidad_vendida'].sum().reset_index()
+                            agg_dict['nombre_cliente'] = 'first'
+                        if 'localidad' in df_filt.columns:
+                            agg_dict['localidad'] = 'first'
                         
+                        cliente_producto = df_filt.groupby('cliente').agg(agg_dict).reset_index()
                         cliente_producto = cliente_producto.sort_values('cantidad_vendida', ascending=False)
+                        
+                        # Agregar ranking
+                        cliente_producto.insert(0, 'Ranking', range(1, len(cliente_producto) + 1))
+                        
                         st.subheader("Top clientes que compran este producto:")
                         st.dataframe(cliente_producto.head(10))
                         
@@ -305,11 +308,6 @@ if uploaded_file:
                 st.dataframe(result)
             with col2:
                 st.metric("Total de devoluciones (unidades)", int(total_devoluciones))
-            if not result.empty:
-                fig = px.bar(result, x='cliente', y='cantidad_devoluciones', 
-                           title='Cantidad de devoluciones por cliente')
-                fig.update_xaxes(tickangle=45)
-                st.plotly_chart(fig, use_container_width=True)
         
         elif analysis_type == "Análisis por género":
             result = get_sales_by_gender(df_filt)

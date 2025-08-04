@@ -27,6 +27,7 @@ def load_and_clean_data(file: BinaryIO) -> pd.DataFrame:
     rename_dict = {
         'cliente': 'cliente',
         'nombre_cliente': 'nombre_cliente',
+        'localidad': 'localidad',
         'artículo': 'codigo_del_articulo',
         'descripción_original': 'descripcion_del_producto',
         'vendedor': 'vendedor',
@@ -43,5 +44,7 @@ def load_and_clean_data(file: BinaryIO) -> pd.DataFrame:
         df['cantidad_vendida'] = pd.to_numeric(df['cantidad_vendida'], errors='coerce')
     if 'cliente' in df.columns:
         df['cliente'] = df['cliente'].astype(str)
+    if 'localidad' in df.columns:
+        df['localidad'] = df['localidad'].astype(str)
     
     return df 

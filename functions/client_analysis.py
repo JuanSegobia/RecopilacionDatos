@@ -13,7 +13,7 @@ def products_bought_by_client(df: pd.DataFrame, client: str, n: int = 10) -> pd.
 def client_share_of_sales(df: pd.DataFrame) -> pd.DataFrame:
     """
     Devuelve el peso (porcentaje) de cada cliente sobre el total neto de unidades vendidas.
-    Incluye el nombre del cliente si está disponible. Solo cuenta ventas normales.
+    Incluye el nombre del cliente y localidad si están disponibles. Solo cuenta ventas normales.
     Incluye ranking y porcentaje formateado.
     """
     # Filtrar solo las ventas que cuentan (excluir categorías especiales)
@@ -24,14 +24,20 @@ def client_share_of_sales(df: pd.DataFrame) -> pd.DataFrame:
     
     total_unidades = df_ventas['cantidad_vendida'].sum()  # Total neto (incluye devoluciones como valores negativos)
     
-    # Agrupar por cliente y obtener el primer nombre_cliente para cada código
+    # Preparar agregaciones dinámicamente según las columnas disponibles
+    agg_dict = {'cantidad_vendida': 'sum'}
+    columns_to_include = ['Ranking', 'cliente', 'cantidad_vendida', 'Porcentaje']
+    
     if 'nombre_cliente' in df_ventas.columns:
-        resumen = df_ventas.groupby('cliente').agg({
-            'cantidad_vendida': 'sum',
-            'nombre_cliente': 'first'  # Tomar el primer nombre para cada cliente
-        }).reset_index()
-    else:
-        resumen = df_ventas.groupby('cliente')['cantidad_vendida'].sum().reset_index()
+        agg_dict['nombre_cliente'] = 'first'
+        columns_to_include.insert(-2, 'nombre_cliente')  # Insertar antes de las últimas dos columnas
+    
+    if 'localidad' in df_ventas.columns:
+        agg_dict['localidad'] = 'first'
+        columns_to_include.insert(-2, 'localidad')  # Insertar antes de las últimas dos columnas
+    
+    # Agrupar por cliente
+    resumen = df_ventas.groupby('cliente').agg(agg_dict).reset_index()
     
     resumen['porcentaje'] = 100 * resumen['cantidad_vendida'] / total_unidades if total_unidades > 0 else 0
     
@@ -43,16 +49,13 @@ def client_share_of_sales(df: pd.DataFrame) -> pd.DataFrame:
     resumen['Porcentaje'] = resumen['porcentaje'].apply(lambda x: f"{x:.1f}%")
     
     # Reordenar columnas para mejor presentación
-    if 'nombre_cliente' in resumen.columns:
-        resumen = resumen[['Ranking', 'cliente', 'nombre_cliente', 'cantidad_vendida', 'Porcentaje']]
-    else:
-        resumen = resumen[['Ranking', 'cliente', 'cantidad_vendida', 'Porcentaje']]
+    resumen = resumen[columns_to_include]
     
     return resumen
 
 def client_returns_count(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Devuelve la cantidad de devoluciones por cliente con porcentaje, nombre del cliente y ranking.
+    Devuelve la cantidad de devoluciones por cliente con porcentaje, nombre del cliente, localidad y ranking.
     Incluye el porcentaje de devoluciones sobre el total de movimientos del cliente.
     """
     # Calcular devoluciones (cantidad negativa)
@@ -60,30 +63,54 @@ def client_returns_count(df: pd.DataFrame) -> pd.DataFrame:
     devoluciones['cantidad_vendida'] = devoluciones['cantidad_vendida'].abs()  # Convertir a positivo para el conteo
     
     if devoluciones.empty:
-        return pd.DataFrame(columns=['Ranking', 'cliente', 'nombre_cliente', 'cantidad_devoluciones', 'total_vendido', 'Porcentaje devoluciones'])
+        columns = ['Ranking', 'cliente', 'cantidad_devoluciones', 'total_vendido', 'Porcentaje devoluciones']
+        if 'nombre_cliente' in df.columns:
+            columns.insert(2, 'nombre_cliente')
+        if 'localidad' in df.columns:
+            columns.insert(-3, 'localidad')
+        return pd.DataFrame(columns=columns)
     
     # Agrupar devoluciones por cliente
-    if 'nombre_cliente' in devoluciones.columns:
-        returns_by_client = devoluciones.groupby(['cliente', 'nombre_cliente'])['cantidad_vendida'].sum().reset_index()
-    else:
-        returns_by_client = devoluciones.groupby('cliente')['cantidad_vendida'].sum().reset_index()
+    group_cols_returns = ['cliente']
+    agg_dict_returns = {'cantidad_vendida': 'sum'}
     
+    if 'nombre_cliente' in devoluciones.columns:
+        group_cols_returns.append('nombre_cliente')
+        agg_dict_returns['nombre_cliente'] = 'first'
+    
+    if 'localidad' in devoluciones.columns:
+        group_cols_returns.append('localidad')  
+        agg_dict_returns['localidad'] = 'first'
+    
+    returns_by_client = devoluciones.groupby('cliente').agg(agg_dict_returns).reset_index()
     returns_by_client = returns_by_client.rename(columns={'cantidad_vendida': 'cantidad_devoluciones'})
     
     # Calcular total vendido por cliente (solo ventas positivas)
     ventas_positivas = df[df['cantidad_vendida'] > 0]
-    if 'nombre_cliente' in ventas_positivas.columns:
-        sales_by_client = ventas_positivas.groupby(['cliente', 'nombre_cliente'])['cantidad_vendida'].sum().reset_index()
-    else:
-        sales_by_client = ventas_positivas.groupby('cliente')['cantidad_vendida'].sum().reset_index()
+    group_cols_sales = ['cliente']
+    agg_dict_sales = {'cantidad_vendida': 'sum'}
     
+    if 'nombre_cliente' in ventas_positivas.columns:
+        group_cols_sales.append('nombre_cliente')
+        agg_dict_sales['nombre_cliente'] = 'first'
+    
+    if 'localidad' in ventas_positivas.columns:
+        group_cols_sales.append('localidad')
+        agg_dict_sales['localidad'] = 'first'
+    
+    sales_by_client = ventas_positivas.groupby('cliente').agg(agg_dict_sales).reset_index()
     sales_by_client = sales_by_client.rename(columns={'cantidad_vendida': 'total_vendido'})
     
     # Merge para obtener devoluciones y ventas por cliente
-    if 'nombre_cliente' in returns_by_client.columns:
-        result = returns_by_client.merge(sales_by_client, on=['cliente', 'nombre_cliente'], how='left')
-    else:
-        result = returns_by_client.merge(sales_by_client, on='cliente', how='left')
+    result = returns_by_client.merge(sales_by_client, on='cliente', how='left', suffixes=('', '_y'))
+    
+    # Limpiar columnas duplicadas del merge
+    for col in result.columns:
+        if col.endswith('_y'):
+            if col.replace('_y', '') in result.columns:
+                result = result.drop(columns=[col])
+            else:
+                result = result.rename(columns={col: col.replace('_y', '')})
     
     result['total_vendido'] = result['total_vendido'].fillna(0)
     
@@ -99,9 +126,13 @@ def client_returns_count(df: pd.DataFrame) -> pd.DataFrame:
     result['Porcentaje devoluciones'] = result['porcentaje_devolucion'].apply(lambda x: f"{x:.1f}%")
     
     # Reordenar columnas para mejor presentación
+    columns_to_include = ['Ranking', 'cliente']
     if 'nombre_cliente' in result.columns:
-        result = result[['Ranking', 'cliente', 'nombre_cliente', 'cantidad_devoluciones', 'total_vendido', 'Porcentaje devoluciones']]
-    else:
-        result = result[['Ranking', 'cliente', 'cantidad_devoluciones', 'total_vendido', 'Porcentaje devoluciones']]
+        columns_to_include.append('nombre_cliente')
+    if 'localidad' in result.columns:
+        columns_to_include.append('localidad')
+    columns_to_include.extend(['cantidad_devoluciones', 'total_vendido', 'Porcentaje devoluciones'])
+    
+    result = result[columns_to_include]
     
     return result 
