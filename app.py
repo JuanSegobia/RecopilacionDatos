@@ -6,6 +6,24 @@ from functions.product_analysis import top_selling_product_by_month, top_selling
 from functions.client_analysis import products_bought_by_client, client_share_of_sales, client_returns_count
 from functions.typology_analysis import add_typology_column, top_selling_typologies, get_special_categories_summary, get_sales_by_gender
 
+# Importaciones opcionales de Google (solo si se necesitan)
+try:
+    import json
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build
+    
+    # Solo intentar cargar credenciales si existen en secrets
+    if "GOOGLE_CREDENTIALS" in st.secrets:
+        credentials_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
+        credentials = service_account.Credentials.from_service_account_info(credentials_dict)
+        GOOGLE_AVAILABLE = True
+    else:
+        GOOGLE_AVAILABLE = False
+except ImportError:
+    GOOGLE_AVAILABLE = False
+except Exception:
+    GOOGLE_AVAILABLE = False
+
 st.set_page_config(page_title="Análisis de Ventas", layout="wide")
 st.title("📊 Análisis de Datos de Ventas")
 
@@ -36,6 +54,7 @@ if uploaded_file:
         ], 
         key="analysis_type" 
     )
+    
     if analysis_type != "Selecciona una opción":
         # Paso 3: Filtros (solo se muestran según el tipo de análisis)
         # Determinar qué filtros mostrar según el análisis seleccionado
