@@ -1,35 +1,69 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+from functions.google_drive import upload_to_drive, get_drive_credentials
 from functions.data_loader import load_and_clean_data
 from functions.product_analysis import top_selling_product_by_month, top_selling_products
 from functions.client_analysis import products_bought_by_client, client_share_of_sales, client_returns_count
 from functions.typology_analysis import add_typology_column, top_selling_typologies, get_special_categories_summary, get_sales_by_gender
 
-# Importaciones opcionales de Google (solo si se necesitan)
-try:
-    import json
-    from google.oauth2 import service_account
-    from googleapiclient.discovery import build
-    
-    # Solo intentar cargar credenciales si existen en secrets
-    if "GOOGLE_CREDENTIALS" in st.secrets:
-        credentials_dict = json.loads(st.secrets["GOOGLE_CREDENTIALS"])
-        credentials = service_account.Credentials.from_service_account_info(credentials_dict)
-        GOOGLE_AVAILABLE = True
-    else:
-        GOOGLE_AVAILABLE = False
-except ImportError:
-    GOOGLE_AVAILABLE = False
-except Exception:
-    GOOGLE_AVAILABLE = False
+# Importaciones para Google Drive
+import io
+from datetime import datetime
 
 st.set_page_config(page_title="Análisis de Ventas", layout="wide")
 st.title("📊 Análisis de Datos de Ventas")
 
+# Obtener credenciales de Google Drive
+credentials = get_drive_credentials()
+
+
 # Paso 1: Subir archivo
 st.header("1. Subir archivo Excel de ventas")
 uploaded_file = st.file_uploader("Selecciona el archivo Excel (.xlsx o .xls)", type=["xlsx", "xls"])
+
+# Sección de Google Drive
+if uploaded_file is not None:
+    st.divider()
+    st.subheader("☁️ Guardar en Google Drive")
+    
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        # Generar nombre sugerido
+        today = datetime.now().strftime("%Y-%m-%d")
+        suggested_name = f"{uploaded_file.name.rsplit('.', 1)[0]}_{today}.{uploaded_file.name.rsplit('.', 1)[1]}"
+        
+        custom_filename = st.text_input(
+            "Nombre para guardar en Drive:",
+            value=suggested_name,
+            help="Personaliza el nombre del archivo para Google Drive"
+        )
+    
+    with col2:
+        st.write("")  # Espaciado
+        st.write("")  # Espaciado
+        if st.button("📤 Subir a Drive", type="primary"):
+            if custom_filename.strip():
+                # Asegurar que tenga extensión
+                if not custom_filename.lower().endswith(('.xlsx', '.xls')):
+                    original_ext = uploaded_file.name.split('.')[-1]
+                    custom_filename = f"{custom_filename}.{original_ext}"
+                
+                # Crear BytesIO del archivo
+                file_content = io.BytesIO(uploaded_file.getvalue())
+                
+                with st.spinner('Subiendo archivo a Google Drive...'):
+                    result = upload_to_drive(file_content, custom_filename, credentials)
+                    
+                if result:
+                    st.success(f"✅ Archivo subido exitosamente como: **{result['name']}**")
+                    st.info(f"🔗 [Ver archivo en Drive]({result['webViewLink']})")
+                    st.caption(f"📅 Subido el: {result['createdTime']}")
+            else:
+                st.error("❌ Por favor ingresa un nombre para el archivo")
+    
+    st.divider()
 
 df = None
 if uploaded_file:
