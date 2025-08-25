@@ -26,6 +26,11 @@ def add_typology_column(df: pd.DataFrame) -> pd.DataFrame:
     deducidas del código del artículo según las reglas de negocio.
     """
     df = df.copy()
+    
+    # Verificar que existe la columna crítica
+    if 'codigo_del_articulo' not in df.columns:
+        raise KeyError(f"La columna 'codigo_del_articulo' no existe. Columnas disponibles: {list(df.columns)}")
+    
     df['codigo_del_articulo'] = df['codigo_del_articulo'].astype(str).str.upper()
     
     # Inicializar columnas

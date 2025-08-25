@@ -6,23 +6,88 @@ from functions.product_analysis import top_selling_product_by_month, top_selling
 from functions.client_analysis import products_bought_by_client, client_share_of_sales, client_returns_count
 from functions.typology_analysis import add_typology_column, top_selling_typologies, get_special_categories_summary, get_sales_by_gender
 
+# 👇 nuevos imports
+import io
+from services.storage_supabase import upload_excel, insert_meta, list_files, download_excel, signed_url
+from utils.format_detect import detect_format
+
 st.set_page_config(page_title="Análisis de Ventas", layout="wide")
 st.title("📊 Análisis de Datos de Ventas")
 
-# Paso 1: Subir archivo
-st.header("1. Subir archivo Excel de ventas")
-uploaded_file = st.file_uploader("Selecciona el archivo Excel (.xlsx o .xls)", type=["xlsx", "xls"])
+# =============================
+# BLOQUE NUEVO: gestor de archivos persistentes
+# =============================
+st.header("0. Gestor de archivos de análisis")
+
+tab1, tab2 = st.tabs(["Subir nuevo", "Abrir guardado"])
 
 df = None
-if uploaded_file:
-    df = load_and_clean_data(uploaded_file)
-    st.success("✅ Archivo cargado correctamente. Filas: {}".format(len(df)))
+
+with tab1:
+    up = st.file_uploader("Subí tu Excel (temporada o locales)", type=["xlsx","xls"])
+    if up is not None:
+        df = load_and_clean_data(up)
+        file_type = detect_format(df)
+        if file_type == "desconocido":
+            st.error("No reconozco el formato (temporada/locales). Revisá columnas.")
+        else:
+            storage_key = upload_excel(up.getvalue(), up.name)
+            insert_meta(file_type, up.name, storage_key)
+            st.success(f"Guardado como '{file_type}'.")
+            st.write("Enlace temporal:", signed_url(storage_key))
+
+with tab2:
+    rows = list_files()
+    if not rows:
+        st.info("No hay archivos guardados aún.")
+    else:
+        label = lambda r: f"{r['file_type']} · {r['original_name']} · {r['uploaded_at']}"
+        selected = st.selectbox("Elegí un archivo", options=rows, format_func=label)
+        if selected:
+            content = download_excel(selected["storage_key"])
+            # Crear un objeto similar a UploadedFile para reutilizar load_and_clean_data
+            bytes_data = io.BytesIO(content)
+            bytes_data.name = selected["original_name"]  # Añadir nombre para detección de extensión
+            
+            # Aplicar la misma limpieza que en archivos nuevos
+            df = load_and_clean_data(bytes_data)
+            
+            st.success(f"Archivo abierto: {selected['original_name']}")
+            st.write("Vista previa:", df.head())
+
+# Paso 1: Preprocesar solo si hay df
+if df is not None:
+    st.success("✅ Archivo listo para análisis. Filas: {}".format(len(df)))
     
-    # Preprocesar tipología
-    df = add_typology_column(df)
-    
+    # Mostrar columnas encontradas para debug
+    with st.expander("🔍 Columnas detectadas en el archivo"):
+        st.write("**Columnas encontradas:**", list(df.columns))
+        
+        # Verificar columnas críticas
+        required_columns = ['codigo_del_articulo', 'cantidad_vendida', 'cliente']
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        
+        if missing_columns:
+            st.error(f"❌ **Columnas críticas faltantes:** {missing_columns}")
+            st.write("**Sugerencia:** Verifica que tu archivo Excel tenga columnas como:")
+            st.write("- Código de artículo/producto (ej: 'Artículo', 'Código', 'Item')")
+            st.write("- Cantidad vendida (ej: 'Unidades', 'Cantidad', 'Cant')")
+            st.write("- Cliente (ej: 'Cliente', 'Cod_Cliente')")
+            st.info("💡 **Tip:** Si es un archivo guardado, el problema puede estar en el formato original del Excel.")
+            st.stop()  # Detener ejecución si faltan columnas críticas
+        else:
+            st.success("✅ Todas las columnas críticas están presentes")
+
+    # Preprocesar tipología solo si las columnas están disponibles
+    try:
+        df = add_typology_column(df)
+        st.success("✅ Tipologías procesadas correctamente")
+    except Exception as e:
+        st.error(f"❌ Error al procesar tipologías: {str(e)}")
+        st.stop()
+
     # Paso 2: Seleccionar tipo de análisis
-    st.header("2. Seleccionar tipo de análisis")
+    st.header("1. Seleccionar tipo de análisis")
     analysis_type = st.selectbox(
         "¿Qué análisis deseas realizar?",
         [
@@ -33,9 +98,10 @@ if uploaded_file:
             "Cantidad de devoluciones por cliente",
             "Análisis por género",
             "Categorías especiales (Cierres, CH, Sorteos, etc.)"
-        ], 
-        key="analysis_type" 
+        ],
+        key="analysis_type"
     )
+
     if analysis_type != "Selecciona una opción":
         # Paso 3: Filtros (solo se muestran según el tipo de análisis)
         # Determinar qué filtros mostrar según el análisis seleccionado
