@@ -1,3 +1,4 @@
+import io
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -6,10 +7,26 @@ from functions.product_analysis import top_selling_product_by_month, top_selling
 from functions.client_analysis import products_bought_by_client, client_share_of_sales, client_returns_count
 from functions.typology_analysis import add_typology_column, top_selling_typologies, get_special_categories_summary, get_sales_by_gender
 
-# 👇 nuevos imports
-import io
-from services.storage_supabase import upload_excel, insert_meta, list_files, download_excel, signed_url
+from services.storage_supabase import upload_to_path, download_excel, signed_url
+from functions.uploads_service import insert_upload_metadata, list_uploads
+
 from utils.format_detect import detect_format
+
+# NUEVOS imports de servicios/útiles
+from functions.uploads_service import (
+    parse_filename, compute_sha256, build_storage_path,
+    check_duplicate, insert_upload_metadata, update_upload_metadata
+)
+from services.storage_supabase import upload_to_path, download_excel
+try:
+    from utils.format_detect import detect_format_v2  # si ya tenés v2
+except ImportError:
+    from utils.format_detect import detect_format as detect_format_v2  # fallback
+try:
+    from functions.domain_cleaning import apply_domain_cleaning
+except Exception:
+    def apply_domain_cleaning(df):  # fallback no-op para no romper
+        return df
 
 st.set_page_config(page_title="Análisis de Ventas", layout="wide")
 st.title("📊 Análisis de Datos de Ventas")
@@ -17,43 +34,86 @@ st.title("📊 Análisis de Datos de Ventas")
 # =============================
 # BLOQUE NUEVO: gestor de archivos persistentes
 # =============================
-st.header("0. Gestor de archivos de análisis")
+st.header("0. Archivos persistidos (por convención de nombre)")
 
-tab1, tab2 = st.tabs(["Subir nuevo", "Abrir guardado"])
+tab_up, tab_list = st.tabs(["Subir nuevo", "Abrir guardado"])
 
 df = None
+context = None
 
-with tab1:
-    up = st.file_uploader("Subí tu Excel (temporada o locales)", type=["xlsx","xls"])
+with tab_up:
+    up = st.file_uploader("Subí tu Excel (.xlsx o .xls) con nombre válido", type=["xlsx","xls"])
+    replace = st.checkbox("Reemplazar si ya existe (conserva histórico)", value=False)
+
     if up is not None:
-        df = load_and_clean_data(up)
-        file_type = detect_format(df)
-        if file_type == "desconocido":
-            st.error("No reconozco el formato (temporada/locales). Revisá columnas.")
-        else:
-            storage_key = upload_excel(up.getvalue(), up.name)
-            insert_meta(file_type, up.name, storage_key)
-            st.success(f"Guardado como '{file_type}'.")
-            st.write("Enlace temporal:", signed_url(storage_key))
+        try:
+            # 1) Validar NOMBRE por convención
+            ctx = parse_filename(up.name)
+            st.success(
+                f"Contexto detectado → tipo={ctx['file_type']} · scope={ctx['scope']} · "
+                f"local={ctx['local_code'] or '—'} · período={ctx['period_str']}"
+            )
 
-with tab2:
-    rows = list_files()
-    if not rows:
-        st.info("No hay archivos guardados aún.")
-    else:
-        label = lambda r: f"{r['file_type']} · {r['original_name']} · {r['uploaded_at']}"
-        selected = st.selectbox("Elegí un archivo", options=rows, format_func=label)
-        if selected:
-            content = download_excel(selected["storage_key"])
-            # Crear un objeto similar a UploadedFile para reutilizar load_and_clean_data
-            bytes_data = io.BytesIO(content)
-            bytes_data.name = selected["original_name"]  # Añadir nombre para detección de extensión
-            
-            # Aplicar la misma limpieza que en archivos nuevos
-            df = load_and_clean_data(bytes_data)
-            
-            st.success(f"Archivo abierto: {selected['original_name']}")
-            st.write("Vista previa:", df.head())
+            # 2) Cargar/Limpiar y DETECTAR FORMATO por columnas
+            tmp_df = load_and_clean_data(up)
+            tmp_df = apply_domain_cleaning(tmp_df)
+            fmt = detect_format_v2(tmp_df)  # dict o str (fallback)
+
+            # Normalizar a dict si vino como string (fallback)
+            if isinstance(fmt, str):
+                fmt = {"family": fmt, "version": "v1"}
+
+            if fmt["family"] == "desconocido":
+                st.error(
+                    "Formato de columnas no reconocido.\n"
+                    "• Para 'temporada' se esperan: cliente, codigo_del_articulo, descripcion_del_producto, cantidad_vendida\n"
+                    "• Para 'locales' se esperan: codigo_del_articulo, descripcion_del_producto, cantidad_vendida"
+                )
+                st.stop()
+
+            # 3) Duplicados por contexto
+            sha = compute_sha256(up.getvalue())
+            prev = check_duplicate(ctx["file_type"], ctx["period_month"], ctx["local_code"])
+            if prev and not replace:
+                st.error("Ya existe un upload para ese contexto. Activá 'Reemplazar' si querés subir uno nuevo.")
+                st.stop()
+
+            # 4) Subir a STORAGE en ruta ordenada (con overwrite según checkbox)
+            storage_key = build_storage_path(ctx["scope"], ctx["local_code"], ctx["period_month"], up.name)
+            upload_to_path(up.getvalue(), storage_key, overwrite=replace)
+
+            format_name = f"{fmt['family']}_v{fmt.get('version','v1')[-1]}"
+
+            if prev and replace:
+                # 🔁 REEMPLAZO: actualizamos el row existente en 'uploads'
+                row = update_upload_metadata(
+                    prev["id"],
+                    original_name=up.name,
+                    storage_key=storage_key,  # mismo key
+                    sha256=sha,
+                    format_name=format_name,
+                    status="processed",
+                    source="upload"
+                    # tip: si querés guardar "última fecha de reemplazo", agregamos luego una columna 'replaced_at'
+                )
+            else:
+                # ➕ INSERCIÓN normal
+                row = insert_upload_metadata(
+                    file_type=ctx["file_type"], scope=ctx["scope"], local_code=ctx["local_code"],
+                    period_month=ctx["period_month"], format_name=format_name,
+                    original_name=up.name, storage_key=storage_key, sha256=sha,
+                    status="processed", source="upload", supersedes_upload_id=None
+                )
+
+            st.success("✅ Archivo subido y registrado en uploads.")
+            st.caption(f"Storage key: `{storage_key}`")
+
+            # Dejo el df listo por si querés continuar con tu análisis abajo
+            df, context = tmp_df, ctx
+
+        except ValueError as e:
+            # Errores de nombre inválido (parser)
+            st.error(str(e))
 
 # Paso 1: Preprocesar solo si hay df
 if df is not None:

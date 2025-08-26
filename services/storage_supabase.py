@@ -1,44 +1,61 @@
 # services/storage_supabase.py
-import uuid, io
-from typing import List, Dict, Any, Optional
-import streamlit as st
+# ------------------------------------------------------------
+# Solo utilidades de STORAGE (Supabase Storage / buckets)
+# No maneja tablas ni metadatos (eso está en functions/uploads_service.py)
+# ------------------------------------------------------------
+
+from typing import Optional
 from supabase import create_client, Client
+import streamlit as st
+
+EXCEL_OOXML = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 def _client() -> Client:
     cfg = st.secrets["supabase"]
     return create_client(cfg["url"], cfg["anon_key"])
 
-def upload_excel(file_bytes: bytes, original_name: str) -> str:
-    """Sube el binario al bucket y devuelve storage_key único."""
+def upload_to_path(
+    file_bytes: bytes,
+    storage_key: str,
+    content_type: str = EXCEL_OOXML,
+    overwrite: bool = False
+) -> None:
+    """
+    Sube un archivo a 'storage_key' dentro del bucket configurado.
+    - Si overwrite=True, hace upsert (sobrescribe si ya existe).
+    - Si overwrite=False, lanzará 409 si el recurso existe.
+    """
     sb = _client()
     bucket = st.secrets["supabase"]["bucket"]
-    key = f"{uuid.uuid4()}.xlsx"
-    # content-type de Excel OOXML
-    sb.storage.from_(bucket).upload(key, file_bytes, {"content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"})
-    return key
+
+    options = {"contentType": content_type}
+    if overwrite:
+        options["upsert"] = "true"  # sobrescribe si existe
+
+    try:
+        sb.storage.from_(bucket).upload(storage_key, file_bytes, options)
+    except Exception as e:
+        # Fallback defensivo si el cliente no respetara 'upsert'
+        if overwrite and any(x in str(e).lower() for x in ["409", "duplicate", "already exists"]):
+            sb.storage.from_(bucket).update(storage_key, file_bytes, options)
+        else:
+            raise
 
 def download_excel(storage_key: str) -> bytes:
+    """Descarga el objeto y devuelve los bytes."""
     sb = _client()
     bucket = st.secrets["supabase"]["bucket"]
     return sb.storage.from_(bucket).download(storage_key)
 
-def signed_url(storage_key: str, expires_in: int = 3600) -> str:
+def signed_url(storage_key: str, expires_in: int = 3600) -> Optional[str]:
+    """Devuelve una URL firmada temporal para compartir/descargar."""
     sb = _client()
     bucket = st.secrets["supabase"]["bucket"]
     res = sb.storage.from_(bucket).create_signed_url(storage_key, expires_in)
     return res.get("signedURL")
 
-def insert_meta(file_type: str, original_name: str, storage_key: str):
+def delete_object(storage_key: str) -> None:
+    """Borra un objeto del bucket (útil si implementás 'revert' o limpieza)."""
     sb = _client()
-    sb.table("files").insert({
-        "file_type": file_type,
-        "original_name": original_name,
-        "storage_key": storage_key
-    }).execute()
-
-def list_files(file_type: Optional[str] = None) -> List[Dict[str, Any]]:
-    sb = _client()
-    q = sb.table("files").select("*").order("uploaded_at", desc=True)
-    if file_type:
-        q = q.eq("file_type", file_type)
-    return q.execute().data
+    bucket = st.secrets["supabase"]["bucket"]
+    sb.storage.from_(bucket).remove(storage_key)
