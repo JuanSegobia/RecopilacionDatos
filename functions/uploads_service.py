@@ -13,6 +13,7 @@ LOCAL_CODES = {"centenario", "5", "49", "55"}
 
 RE_GLOBAL = re.compile(r"^temporada_(\d{4})-(\d{2})\.(xlsx|xls)$", re.IGNORECASE)
 RE_LOCAL  = re.compile(r"^local-(centenario|5|49|55)_(\d{4})-(\d{2})\.(xlsx|xls)$", re.IGNORECASE)
+RE_ARTICULOS_MES = re.compile(r"^articulos-mas-vendidos_(\d{4})-(\d{2})\.(xlsx|xls)$", re.IGNORECASE)
 
 def _sb() -> Client:
     cfg = st.secrets["supabase"]
@@ -59,10 +60,22 @@ def parse_filename(original_name: str) -> Dict[str, Any]:
             "period_str": f"{year:04d}-{month:02d}"
         }
 
+    m = RE_ARTICULOS_MES.match(original_name)
+    if m:   
+        year, month = int(m.group(1)), int(m.group(2))
+        return {
+            "scope": "global",
+            "file_type": "locales",   # mismo formato que locales (sin cliente)
+            "local_code": None,
+            "period_month": date(year, month, 1),
+            "period_str": f"{year:04d}-{month:02d}"
+        }
+
     raise ValueError(
         "Nombre de archivo inválido. Usá una de estas convenciones:\n"
         "  • Global (temporada): temporada_YYYY-MM.xlsx  (ej.: temporada_2025-06.xlsx)\n"
-        "  • Por local (locales): local-<centenario|5|49|55>_YYYY-MM.xlsx  (ej.: local-49_2025-06.xlsx)"
+        "  • Por local (locales): local-<centenario|5|49|55>_YYYY-MM.xlsx  (ej.: local-49_2025-06.xlsx)\n"
+        "  • Global (artículos más vendidos): articulos-mas-vendidos_YYYY-MM.xlsx  (ej.: articulos-mas-vendidos_2025-06.xlsx)"
     )
 
 def compute_sha256(file_bytes: bytes) -> str:

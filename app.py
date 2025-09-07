@@ -2,30 +2,34 @@ import io
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+
 from functions.data_loader import load_and_clean_data
 from functions.product_analysis import top_selling_product_by_month, top_selling_products
 from functions.client_analysis import products_bought_by_client, client_share_of_sales, client_returns_count
 from functions.typology_analysis import add_typology_column, top_selling_typologies, get_special_categories_summary, get_sales_by_gender
+from functions.columns_normalizer import normalize_columns
 
+# Storage
 from services.storage_supabase import upload_to_path, download_excel, signed_url
-from functions.uploads_service import insert_upload_metadata, list_uploads
 
-from utils.format_detect import detect_format
-
-# NUEVOS imports de servicios/útiles
+# Uploads/metadata
 from functions.uploads_service import (
     parse_filename, compute_sha256, build_storage_path,
-    check_duplicate, insert_upload_metadata, update_upload_metadata
+    check_duplicate, insert_upload_metadata, update_upload_metadata,
+    list_uploads
 )
-from services.storage_supabase import upload_to_path, download_excel
+
+# Detección de formato (v2 si está, sinó fallback)
 try:
-    from utils.format_detect import detect_format_v2  # si ya tenés v2
+    from utils.format_detect import detect_format_v2
 except ImportError:
-    from utils.format_detect import detect_format as detect_format_v2  # fallback
+    from utils.format_detect import detect_format as detect_format_v2
+
+# Limpieza de dominio (fallback no-op si no existe)
 try:
     from functions.domain_cleaning import apply_domain_cleaning
 except Exception:
-    def apply_domain_cleaning(df):  # fallback no-op para no romper
+    def apply_domain_cleaning(df):
         return df
 
 st.set_page_config(page_title="Análisis de Ventas", layout="wide")
@@ -56,6 +60,7 @@ with tab_up:
 
             # 2) Cargar/Limpiar y DETECTAR FORMATO por columnas
             tmp_df = load_and_clean_data(up)
+            tmp_df = normalize_columns(tmp_df)         # 👈 normaliza cabeceras
             tmp_df = apply_domain_cleaning(tmp_df)
             fmt = detect_format_v2(tmp_df)  # dict o str (fallback)
 
@@ -114,6 +119,62 @@ with tab_up:
         except ValueError as e:
             # Errores de nombre inválido (parser)
             st.error(str(e))
+
+with tab_list:
+    st.subheader("Abrir un archivo guardado")
+    # Filtros
+    scope_opt = st.selectbox("Scope", options=["(todos)", "global", "local"], index=0)
+    file_type_opt = st.selectbox("Tipo", options=["(todos)", "temporada", "locales"], index=0)
+
+    local_code_opt = None
+    if scope_opt == "local":
+        local_code_opt = st.selectbox("Local", options=["centenario","5","49","55"])
+
+    # filtros de período (por default mes/año actuales)
+    col_a, col_m = st.columns(2)
+    with col_a:
+        year_opt = st.number_input("Año", min_value=2020, max_value=2100, value=pd.Timestamp.today().year, step=1)
+    with col_m:
+        month_opt = st.number_input("Mes", min_value=1, max_value=12, value=pd.Timestamp.today().month, step=1)
+
+    # Normalizar valores para el servicio
+    filt_scope = None if scope_opt == "(todos)" else scope_opt
+    filt_ftype = None if file_type_opt == "(todos)" else file_type_opt
+
+    # Traer datos desde uploads
+    rows = list_uploads(scope=filt_scope, local_code=local_code_opt, year=int(year_opt), month=int(month_opt), file_type=filt_ftype)
+
+    if not rows:
+        st.info("No hay archivos que coincidan con los filtros.")
+    else:
+        # Etiqueta compacta
+        def fmt_row(r):
+            loc = f" · {r['local_code']}" if r["local_code"] else ""
+            return f"{r['file_type']} · {r['scope']}{loc} · {r['period_month']} · {r['uploaded_at']}"
+
+        selected = st.selectbox("Elegí un archivo", options=rows, format_func=fmt_row)
+
+        # Abrir
+        if selected and st.button("Abrir archivo seleccionado", type="primary"):
+            content = download_excel(selected["storage_key"])
+            df = pd.read_excel(io.BytesIO(content))
+            df = normalize_columns(df)
+            # limpieza de dominio mínima (si la tenés)
+            try:
+                df = apply_domain_cleaning(df)
+            except Exception:
+                pass
+
+            # contexto mínimo para el pipeline posterior
+            context = {
+                "file_type": selected["file_type"],
+                "scope": selected["scope"],
+                "local_code": selected["local_code"],
+                "period_month": selected["period_month"],
+            }
+            st.success(f"Abriste: {fmt_row(selected)}")
+
+
 
 # Paso 1: Preprocesar solo si hay df
 if df is not None:
