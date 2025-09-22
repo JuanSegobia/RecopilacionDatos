@@ -9,10 +9,23 @@ from functions.typology_analysis import add_typology_column, top_selling_typolog
 # 👇 nuevos imports
 import io
 from services.storage_supabase import upload_excel, insert_meta, list_files, download_excel, signed_url
-from utils.format_detect import detect_format
+from utils.format_detect import detect_format, detect_format_smart, detect_from_filename
+from collections import OrderedDict
+from functions.data_repo import DataRepository
 
 st.set_page_config(page_title="Análisis de Ventas", layout="wide")
 st.title("📊 Análisis de Datos de Ventas")
+
+# Flag para mostrar mensajes de carga (debug)
+show_debug = st.sidebar.checkbox("Mostrar mensajes de carga", value=False)
+
+# Constantes de UI (definidas temprano para evitar NameError)
+TIPO_ARCHIVO_LABELS = OrderedDict({
+    "temporada": "Temporada",
+    "articulos_mes": "Artículos más vendidos por mes",
+    "locales": "Artículos vendidos por locales",
+})
+LOCALES_OPCIONES = ["Centenario", "55", "49", "5"]
 
 # =============================
 # BLOQUE NUEVO: gestor de archivos persistentes
@@ -22,101 +35,162 @@ st.header("0. Gestor de archivos de análisis")
 tab1, tab2 = st.tabs(["Subir nuevo", "Abrir guardado"])
 
 df = None
+repo = DataRepository()
 
 with tab1:
     up = st.file_uploader("Subí tu Excel (temporada o locales)", type=["xlsx","xls"])
     if up is not None:
-        df = load_and_clean_data(up)
-        file_type = detect_format(df)
+        df = repo.load_from_upload(up)
+        # Preferir tipo por nombre si existe (incluye sublocal)
+        file_type = detect_from_filename(getattr(up, 'name', '')) or detect_format(df)
         if file_type == "desconocido":
             st.error("No reconozco el formato (temporada/locales). Revisá columnas.")
         else:
-            storage_key = upload_excel(up.getvalue(), up.name)
-            insert_meta(file_type, up.name, storage_key)
-            st.success(f"Guardado como '{file_type}'.")
-            st.write("Enlace temporal:", signed_url(storage_key))
+            key = upload_excel(up.getvalue(), up.name)
+            if key:
+                insert_meta(file_type, up.name, key)
+                st.success(f"Guardado como '{file_type}'.")
+                url = signed_url(key)
+                if url:
+                    st.write("Enlace temporal:", url)
+                else:
+                    st.info("Archivo guardado, pero no se pudo generar enlace temporal.")
+            else:
+                st.info("No se subió a Supabase (¿secrets no configurados o error de red?). Continuás igual con el archivo local.")
 
 with tab2:
-    rows = list_files()
+    # Controles de selección intuitivos
+    colA, colB = st.columns([2, 1])
+    with colA:
+        tipo_label = st.selectbox(
+            "Tipo de archivo",
+            list(TIPO_ARCHIVO_LABELS.values()),
+            index=0,
+            key="open_tipo_archivo"
+        )
+    with colB:
+        local_sel = ""
+        if tipo_label == TIPO_ARCHIVO_LABELS["locales"]:
+            local_sel = st.selectbox("Local", LOCALES_OPCIONES, index=0, key="open_local")
+    
+    # Mapear label a clave interna
+    tipo_map_inv = {v: k for k, v in TIPO_ARCHIVO_LABELS.items()}
+    tipo_key = tipo_map_inv.get(tipo_label, "temporada")
+
+    rows = list_files(file_type=tipo_key if tipo_key != "locales" else None)
     if not rows:
-        st.info("No hay archivos guardados aún.")
+        st.info("No hay archivos guardados o Supabase no está configurado.")
     else:
-        label = lambda r: f"{r['file_type']} · {r['original_name']} · {r['uploaded_at']}"
-        selected = st.selectbox("Elegí un archivo", options=rows, format_func=label)
-        if selected:
-            content = download_excel(selected["storage_key"])
-            # Crear un objeto similar a UploadedFile para reutilizar load_and_clean_data
-            bytes_data = io.BytesIO(content)
-            bytes_data.name = selected["original_name"]  # Añadir nombre para detección de extensión
-            
-            # Aplicar la misma limpieza que en archivos nuevos
-            df = load_and_clean_data(bytes_data)
-            
-            st.success(f"Archivo abierto: {selected['original_name']}")
-            st.write("Vista previa:", df.head())
+        # Filtrar por tipo si se eligió locales o artículos por mes
+        filtered = rows
+        if tipo_key != "locales":
+            filtered = [r for r in rows if r.get("file_type") == tipo_key]
+        else:
+            # Locales: aceptar tanto file_type=="locales" como variantes (p.ej. locales:centenario)
+            loc_norm = local_sel.lower() if local_sel else ""
+            tmp = []
+            for r in rows:
+                ft = (r.get("file_type") or "").lower()
+                name = (r.get("original_name") or "").lower()
+                if ft.startswith("locales") or ft == "locales":
+                    if not loc_norm or loc_norm in ft or loc_norm in name:
+                        tmp.append(r)
+            filtered = tmp
+        
+        if not filtered:
+            st.warning("No se encontraron archivos para el filtro seleccionado.")
+        else:
+            label = lambda r: f"{r.get('file_type','?')} · {r.get('original_name','?')} · {r.get('uploaded_at','')}"
+            selected = st.selectbox(
+                "Elegí un archivo",
+                options=filtered,
+                format_func=label,
+                index=None,
+                placeholder="Seleccioná un archivo"
+            )
+            if selected is not None:
+                content = download_excel(selected.get("storage_key",""))
+                if content is None:
+                    st.error("No se pudo descargar el archivo (Supabase no disponible).")
+                else:
+                    df = repo.load_from_supabase_bytes(selected.get("original_name","archivo.xlsx"), content)
+                    st.success(f"Archivo abierto: {selected['original_name']}")
+                    if show_debug:
+                        st.write("Vista previa:", df.head())
 
 # Paso 1: Preprocesar solo si hay df
 if df is not None:
-    st.success("✅ Archivo listo para análisis. Filas: {}".format(len(df)))
+    if show_debug:
+        st.success("✅ Archivo listo para análisis. Filas: {}".format(len(df)))
     
-    # Mostrar columnas encontradas para debug
-    with st.expander("🔍 Columnas detectadas en el archivo"):
-        st.write("**Columnas encontradas:**", list(df.columns))
-        
-        # Verificar columnas críticas
-        required_columns = ['codigo_del_articulo', 'cantidad_vendida', 'cliente']
-        missing_columns = [col for col in required_columns if col not in df.columns]
-        
-        if missing_columns:
-            st.error(f"❌ **Columnas críticas faltantes:** {missing_columns}")
-            st.write("**Sugerencia:** Verifica que tu archivo Excel tenga columnas como:")
-            st.write("- Código de artículo/producto (ej: 'Artículo', 'Código', 'Item')")
-            st.write("- Cantidad vendida (ej: 'Unidades', 'Cantidad', 'Cant')")
-            st.write("- Cliente (ej: 'Cliente', 'Cod_Cliente')")
-            st.info("💡 **Tip:** Si es un archivo guardado, el problema puede estar en el formato original del Excel.")
-            st.stop()  # Detener ejecución si faltan columnas críticas
-        else:
+    # Verificar columnas críticas (si faltan, mostrar error siempre)
+    # Para locales solo necesitamos cantidad_vendida, para temporada necesitamos más
+    required_columns = ['cantidad_vendida']  # Mínimo requerido
+    missing_columns = [col for col in required_columns if col not in df.columns]
+    if missing_columns:
+        st.error(f"❌ Columnas críticas faltantes: {missing_columns}")
+        st.stop()
+    else:
+        if show_debug:
             st.success("✅ Todas las columnas críticas están presentes")
 
     # Preprocesar tipología solo si las columnas están disponibles
     try:
         df = add_typology_column(df)
-        st.success("✅ Tipologías procesadas correctamente")
+        if show_debug:
+            st.success("✅ Tipologías procesadas correctamente")
     except Exception as e:
         st.error(f"❌ Error al procesar tipologías: {str(e)}")
         st.stop()
 
     # Paso 2: Seleccionar tipo de análisis
     st.header("1. Seleccionar tipo de análisis")
+    
+    # Determinar qué análisis mostrar según el tipo de archivo
+    has_cliente = 'cliente' in df.columns
+    has_tipologia = 'tipologia' in df.columns
+    has_genero = 'genero' in df.columns
+    
+    # Opciones de análisis según el tipo de archivo
+    analysis_options = ["Top productos más vendidos"]
+    
+    if has_cliente:
+        analysis_options.extend([
+            "Productos más comprados por cliente",
+            "Peso de cada cliente sobre el total de unidades",
+            "Cantidad de devoluciones por cliente"
+        ])
+    
+    if has_tipologia:
+        analysis_options.append("Tipologías más vendidas")
+    
+    if has_genero:
+        analysis_options.append("Análisis por género")
+    
+    if has_tipologia:  # Solo si hay tipología podemos tener categorías especiales
+        analysis_options.append("Categorías especiales (Cierres, CH, Sorteos, etc.)")
+    
     analysis_type = st.selectbox(
         "¿Qué análisis deseas realizar?",
-        [
-            "Productos más comprados por cliente",
-            "Tipologías más vendidas",
-            "Top productos más vendidos",
-            "Peso de cada cliente sobre el total de unidades",
-            "Cantidad de devoluciones por cliente",
-            "Análisis por género",
-            "Categorías especiales (Cierres, CH, Sorteos, etc.)"
-        ],
+        analysis_options,
         key="analysis_type"
     )
 
     if analysis_type != "Selecciona una opción":
-        # Paso 3: Filtros (solo se muestran según el tipo de análisis)
+        # Paso 3: Filtros (solo se muestran según el tipo de análisis y columnas disponibles)
         # Determinar qué filtros mostrar según el análisis seleccionado
-        show_cliente_filter = analysis_type in ["Productos más comprados por cliente", "Peso de cada cliente sobre el total de unidades"]
+        show_cliente_filter = has_cliente and analysis_type in ["Productos más comprados por cliente", "Peso de cada cliente sobre el total de unidades"]
         show_producto_filter = analysis_type in ["Productos más comprados por cliente", "Peso de cada cliente sobre el total de unidades"]
-        show_tipologia_filter = analysis_type in ["Productos más comprados por cliente", "Peso de cada cliente sobre el total de unidades", "Cantidad de devoluciones por cliente", "Análisis por género"]
+        show_tipologia_filter = has_tipologia and analysis_type in ["Productos más comprados por cliente", "Peso de cada cliente sobre el total de unidades", "Cantidad de devoluciones por cliente", "Análisis por género"]
         
         # Solo mostrar el header de filtros si hay al menos un filtro que mostrar
         if show_cliente_filter or show_producto_filter or show_tipologia_filter:
             st.header("3. Filtros")
             
-            # Filtros dinámicos
-            clientes = df['cliente'].dropna().unique().tolist()
-            productos = df['descripcion_del_producto'].dropna().unique().tolist()
-            tipologias = df['tipologia'].dropna().unique().tolist()
+            # Filtros dinámicos (solo si las columnas existen)
+            clientes = df['cliente'].dropna().unique().tolist() if has_cliente else []
+            productos = df['descripcion_del_producto'].dropna().unique().tolist() if 'descripcion_del_producto' in df.columns else []
+            tipologias = df['tipologia'].dropna().unique().tolist() if has_tipologia else []
 
             # Crear columnas dinámicamente según los filtros que se muestren
             filters_to_show = []
@@ -254,7 +328,7 @@ if df is not None:
         elif analysis_type == "Top productos más vendidos":
             # No se muestran filtros para este análisis
             n = st.slider("¿Cuántos productos mostrar?", 5, 20, 10)
-            result = top_selling_products(df[df['cuenta_ventas'] == True], n)
+            result = top_selling_products(df, n)
             
             # Agregar ranking
             if not result.empty:
@@ -263,7 +337,9 @@ if df is not None:
             
             st.dataframe(result)
             if not result.empty:
-                fig = px.bar(result, x='descripcion_del_producto', y='cantidad_vendida', 
+                # Determinar qué columna usar para el eje X
+                x_col = 'descripcion_del_producto' if 'descripcion_del_producto' in result.columns else 'codigo_del_articulo'
+                fig = px.bar(result, x=x_col, y='cantidad_vendida', 
                            title='Top productos más vendidos')
                 fig.update_xaxes(tickangle=45)
                 st.plotly_chart(fig, use_container_width=True)
