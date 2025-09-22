@@ -19,6 +19,11 @@ def top_selling_products(df: pd.DataFrame, n: int = 10) -> pd.DataFrame:
         df_ventas = df[df['cuenta_ventas'] == True]
     else:
         df_ventas = df  # Si no existe la columna, usar todos los datos
+    
+    # Determinar qué columnas usar para el groupby
+    groupby_cols = ['codigo_del_articulo']
+    if 'descripcion_del_producto' in df_ventas.columns:
+        groupby_cols.append('descripcion_del_producto')
         
-    result = df_ventas.groupby(['codigo_del_articulo', 'descripcion_del_producto'])['cantidad_vendida'].sum().reset_index()
+    result = df_ventas.groupby(groupby_cols)['cantidad_vendida'].sum().reset_index()
     return result.sort_values('cantidad_vendida', ascending=False).head(n) 
