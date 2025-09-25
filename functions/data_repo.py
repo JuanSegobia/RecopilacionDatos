@@ -4,6 +4,7 @@ import streamlit as st
 from utils.format_detect import detect_format, detect_format_smart
 from functions.parsers.temporada import parse_temporada
 from functions.parsers.locales import parse_locales
+from functions.parsers.articulos_mes import parse_articulos_mes
 from functions.schemas import canonicalize
 
 @st.cache_data(show_spinner=False)
@@ -25,6 +26,8 @@ class DataRepository:
         fmt = detect_format_smart(df, filename)
         if fmt == 'temporada':
             return parse_temporada(df)
+        if fmt == 'articulos_mes':
+            return parse_articulos_mes(df)
         if fmt == 'locales' or fmt.startswith('locales:'):
             return parse_locales(df)
         # fallback: canonical base
