@@ -10,12 +10,33 @@ from functions.schemas import canonicalize
 @st.cache_data(show_spinner=False)
 def _cache_df(key: str, content: bytes) -> pd.DataFrame:
     bio = io.BytesIO(content)
-    # Intentar leer Excel
+    name_lower = str(key).lower()
     try:
-        df = pd.read_excel(bio, engine='openpyxl')
+        if name_lower.endswith('.xlsx'):
+            df = pd.read_excel(bio, engine='openpyxl')
+        else:
+            try:
+                df = pd.read_excel(bio, engine='xlrd')
+            except ImportError:
+                # Intentar calamine como alternativa universal
+                bio.seek(0)
+                try:
+                    df = pd.read_excel(bio, engine='calamine')
+                except Exception:
+                    st.error("No se pudo leer .xls: falta 'xlrd==1.2.0' y falló engine 'calamine'. Convertí a .xlsx.")
+                    raise
     except Exception:
+        # Fallback cruzado por si la extensión engaña
         bio.seek(0)
-        df = pd.read_excel(bio, engine='xlrd')
+        try:
+            df = pd.read_excel(bio, engine='openpyxl')
+        except Exception:
+            bio.seek(0)
+            try:
+                df = pd.read_excel(bio, engine='xlrd')
+            except Exception:
+                bio.seek(0)
+                df = pd.read_excel(bio, engine='calamine')
     return df
 
 class DataRepository:
@@ -44,12 +65,16 @@ class DataRepository:
             if name_lower.endswith('.xlsx'):
                 df = pd.read_excel(uploaded_file, engine='openpyxl')
             else:
-                # .xls u otros: intentar xlrd; si no está instalado, informar claramente
+                # .xls u otros: intentar xlrd; si no está instalado, intentar calamine
                 try:
                     df = pd.read_excel(uploaded_file, engine='xlrd')
-                except ImportError as e:
-                    st.error("Falta la dependencia 'xlrd' para leer archivos .xls en el entorno de despliegue. Convertí el archivo a .xlsx o reinstalá con xlrd==1.2.0.")
-                    raise
+                except ImportError:
+                    uploaded_file.seek(0)
+                    try:
+                        df = pd.read_excel(uploaded_file, engine='calamine')
+                    except Exception:
+                        st.error("No se pudo leer .xls: falta 'xlrd==1.2.0' y falló engine 'calamine'. Convertí a .xlsx.")
+                        raise
         except Exception:
             # fallback cruzado: intentar el otro engine por si la extensión engaña
             uploaded_file.seek(0)
@@ -57,7 +82,11 @@ class DataRepository:
                 df = pd.read_excel(uploaded_file, engine='openpyxl')
             except Exception:
                 uploaded_file.seek(0)
-                df = pd.read_excel(uploaded_file, engine='xlrd')
+                try:
+                    df = pd.read_excel(uploaded_file, engine='xlrd')
+                except Exception:
+                    uploaded_file.seek(0)
+                    df = pd.read_excel(uploaded_file, engine='calamine')
         return self._parse_by_format(df, getattr(uploaded_file, 'name', None))
 
     def load_from_supabase_bytes(self, original_name: str, content: bytes) -> pd.DataFrame:

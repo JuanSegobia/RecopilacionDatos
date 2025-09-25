@@ -26,18 +26,39 @@ def _bucket_name() -> Optional[str]:
         return None
 
 
+def _guess_content_type(original_name: str) -> str:
+    name = (original_name or "").lower()
+    if name.endswith('.xlsx'):
+        return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    if name.endswith('.xls'):
+        return "application/vnd.ms-excel"
+    return "application/octet-stream"
+
+
+def _ext_from_name(original_name: str) -> str:
+    name = (original_name or "").lower()
+    if name.endswith('.xlsx'):
+        return 'xlsx'
+    if name.endswith('.xls'):
+        return 'xls'
+    # default to xlsx if unknown
+    return 'xlsx'
+
+
 def upload_excel(file_bytes: bytes, original_name: str) -> Optional[str]:
-    """Sube el binario al bucket y devuelve storage_key único, o None si falla."""
+    """Sube el binario al bucket y devuelve storage_key único, preservando extensión, o None si falla."""
     sb = _client()
     bucket = _bucket_name()
     if sb is None or bucket is None:
         return None
     try:
-        key = f"{uuid.uuid4()}.xlsx"
+        ext = _ext_from_name(original_name)
+        key = f"{uuid.uuid4()}.{ext}"
+        content_type = _guess_content_type(original_name)
         sb.storage.from_(bucket).upload(
             key,
             file_bytes,
-            {"content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}
+            {"content-type": content_type}
         )
         return key
     except Exception:
