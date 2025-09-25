@@ -39,7 +39,25 @@ class DataRepository:
 
     def load_from_upload(self, uploaded_file) -> pd.DataFrame:
         # leer con pandas directo (streamlit UploadedFile)
-        df = pd.read_excel(uploaded_file, engine='openpyxl') if uploaded_file.name.lower().endswith('.xlsx') else pd.read_excel(uploaded_file, engine='xlrd')
+        name_lower = uploaded_file.name.lower()
+        try:
+            if name_lower.endswith('.xlsx'):
+                df = pd.read_excel(uploaded_file, engine='openpyxl')
+            else:
+                # .xls u otros: intentar xlrd; si no está instalado, informar claramente
+                try:
+                    df = pd.read_excel(uploaded_file, engine='xlrd')
+                except ImportError as e:
+                    st.error("Falta la dependencia 'xlrd' para leer archivos .xls en el entorno de despliegue. Convertí el archivo a .xlsx o reinstalá con xlrd==1.2.0.")
+                    raise
+        except Exception:
+            # fallback cruzado: intentar el otro engine por si la extensión engaña
+            uploaded_file.seek(0)
+            try:
+                df = pd.read_excel(uploaded_file, engine='openpyxl')
+            except Exception:
+                uploaded_file.seek(0)
+                df = pd.read_excel(uploaded_file, engine='xlrd')
         return self._parse_by_format(df, getattr(uploaded_file, 'name', None))
 
     def load_from_supabase_bytes(self, original_name: str, content: bytes) -> pd.DataFrame:
